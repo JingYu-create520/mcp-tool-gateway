@@ -27,6 +27,12 @@ server:
 vredis:
   base-url: ${VREDIS_BASE_URL:http://localhost:9090}
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
 # 开发/测试用内存 API Key（生产实现需改为数据库存储 + 密钥哈希）
 gateway:
   api-keys:

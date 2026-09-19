@@ -32,6 +32,8 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/actuator/health").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // OpenAPI 文档（仅接口元数据，业务端点仍在 /admin/** 与 /mcp/** 保护之内）
+                        .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         .requestMatchers("/admin/**").hasRole("admin")
                         .requestMatchers("/mcp/**").authenticated()
                         .requestMatchers("/confirmations/**").authenticated()

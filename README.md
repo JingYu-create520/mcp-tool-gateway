@@ -1,3 +1,16 @@
+![CI](https://github.com/JingYu-create520/mcp-tool-gateway/actions/workflows/ci.yml/badge.svg)
+![Java](https://img.shields.io/badge/Java-21-blue)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0-brightgreen)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+
+## 项目亮点
+
+- **MCP 协议完整实现**：基于 Spring AI 2.0.1 + MCP SDK 2.0.0，Streamable HTTP 传输，支持运行时从数据库动态注册工具，无需重启即可上线新工具
+- **三级权限模型**：API Key 认证 + RBAC 角色 + 租户隔离，无权限时按 MCP 语义返回 `isError: true` 而非 HTTP 5xx
+- **人工确认状态机**：WRITE/DANGEROUS 工具走 pending → confirm → execute 流程，input_hash 防止"确认后换参攻击"，乐观锁保证幂等
+- **事务性 Outbox 审计**：审计与业务同事务提交，异步 relay 不丢日志，敏感字段（password/token/apiKey）自动脱敏
+- **CI 全绿**：含 H2 本地测试 + Testcontainers PostgreSQL 真实集成测试
+
 # mcp-tool-gateway — MCP 工具网关与安全沙箱
 
 把 MCP Server 的"裸奔"工具调用变成可控流量。AI 客户端仍然用标准 MCP 协议（Streamable HTTP）
@@ -68,6 +81,10 @@ MCP Inspector / Claude Desktop 配置示例：
 
 开发/测试 Key 在 `gateway-core/src/main/resources/application.yml`（`gateway.api-keys`）：
 `admin-key`（admin+user，tenant-a）、`user-key`（user，tenant-a）。**生产必须改为数据库存储 + 密钥哈希。**
+
+## REST API 文档
+
+启动应用后访问 http://localhost:8080/swagger-ui.html 查看管理接口、确认接口、审计查询接口的完整 OpenAPI 文档。
 
 ## 工具与权限矩阵
 

@@ -1,0 +1,12 @@
+# PermissionCheckerIT 等使用：H2 内存库 + 关闭 Flyway；
+# gateway.api-keys 沿用主 application.yml，无需重复定义。
+spring:
+  datasource:
+    url: jdbc:h2:mem:mcp_test;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false

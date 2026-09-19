@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # 单元测试 + H2 集成测试 + Testcontainers PostgreSQL 集成测试（ubuntu 自带 Docker）
+      # PG IT 会真实执行 V1~V3 迁移（JSONB/Outbox/ShedLock）并跑通完整业务流
+      - name: Build & Test
+        run: ./mvnw -B -ntp verify

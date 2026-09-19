@@ -1,0 +1,48 @@
+spring:
+  application:
+    name: mcp-tool-gateway
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/mcp_gateway}
+    username: ${DB_USER:mcp}
+    password: ${DB_PASSWORD:mcp}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  flyway:
+    enabled: true
+  ai:
+    mcp:
+      server:
+        name: mcp-tool-gateway
+        version: 0.1.0
+        type: SYNC
+        protocol: STREAMABLE
+
+server:
+  port: 8080
+
+# vredis HTTP Adapter 地址（阶段五）
+vredis:
+  base-url: ${VREDIS_BASE_URL:http://localhost:9090}
+
+# 开发/测试用内存 API Key（生产实现需改为数据库存储 + 密钥哈希）
+gateway:
+  api-keys:
+    keys:
+      admin-key:
+        callerId: admin-user
+        tenantId: tenant-a
+        roles:
+          - admin
+          - user
+      user-key:
+        callerId: user-1
+        tenantId: tenant-a
+        roles:
+          - user
+
+logging:
+  level:
+    com.example.mcp: DEBUG
+    io.modelcontextprotocol: INFO

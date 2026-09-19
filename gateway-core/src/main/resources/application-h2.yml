@@ -1,0 +1,13 @@
+# 本地无 Docker 时的兜底 profile：H2 内存库，Flyway 关闭，由 Hibernate 按方言建表
+# （inputSchema 落 H2 的 JSON 类型；CI / 生产用 PostgreSQL + V1__init.sql 的 JSONB）。
+# 用法: java -jar gateway-core.jar --spring.profiles.active=h2
+spring:
+  datasource:
+    url: jdbc:h2:mem:mcp_gateway;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+  flyway:
+    enabled: false

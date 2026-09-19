@@ -1,0 +1,39 @@
+# mcp-tool-gateway 完整部署：PostgreSQL 16 + 网关本体
+# 用法:
+#   mvn -pl gateway-core -am package -DskipTests   # 先打出 fat jar
+#   docker compose up -d
+services:
+  postgres:
+    image: postgres:16
+    container_name: mcp-gateway-postgres
+    environment:
+      POSTGRES_DB: mcp_gateway
+      POSTGRES_USER: ${DB_USER:-mcp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-mcp}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcp -d mcp_gateway"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build: .
+    container_name: mcp-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/mcp_gateway
+      DB_USER: ${DB_USER:-mcp}
+      DB_PASSWORD: ${DB_PASSWORD:-mcp}
+      # 未部署 vredis 时留空即可：工具调用会返回结构化的 vredis_unavailable JSON
+      VREDIS_BASE_URL: ${VREDIS_BASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

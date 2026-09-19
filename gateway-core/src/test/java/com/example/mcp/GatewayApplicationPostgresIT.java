@@ -8,6 +8,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.web.client.RestClient;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -22,8 +23,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * PostgreSQL 集成测试：验证 V1__init.sql（JSONB）在真实 PG 上可用、工具目录可正常读写。
  * 本机无 Docker 时自动跳过（disabledWithoutDocker）；GitHub Actions（ubuntu-latest 自带 Docker）必跑。
+ * postgres profile 显式启用 Flyway 并让 Hibernate 只做 schema 校验（建表职责归 Flyway）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("postgres")
 @Testcontainers(disabledWithoutDocker = true)
 class GatewayApplicationPostgresIT {
 

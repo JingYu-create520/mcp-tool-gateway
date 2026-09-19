@@ -11,6 +11,7 @@ spring:
     open-in-view: false
   flyway:
     enabled: true
+    locations: classpath:db/migration
   ai:
     mcp:
       server:

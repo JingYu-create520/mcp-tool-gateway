@@ -1,0 +1,10 @@
+# PostgreSQL 集成测试 profile（GatewayApplicationPostgresIT）：
+# Flyway 显式启用并指向唯一迁移目录；Hibernate 只校验 schema，建表职责完全归 Flyway。
+# 数据源由 @ServiceConnection 注入（PostgreSQLContainer），此处不配置。
+spring:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: validate

@@ -7,10 +7,10 @@
 
 ```bash
 # 方式一（本机无 Docker，H2 内存库）
-./mvnw spring-boot:run -pl gateway-core -Dspring-boot.run.profiles=h2
+mvnw spring-boot:run -pl gateway-core -Dspring-boot.run.profiles=h2
 
 # 方式二（PostgreSQL，需要 docker compose up -d 先起库）
-./mvnw spring-boot:run -pl gateway-core
+mvnw spring-boot:run -pl gateway-core
 ```
 
 Gateway 默认监听 `http://localhost:8080`，MCP 端点 `/mcp`。
@@ -20,7 +20,7 @@ Gateway 默认监听 `http://localhost:8080`，MCP 端点 `/mcp`。
 新开一个终端：
 
 ```bash
-./mvnw spring-boot:run -pl examples/agent-demo
+mvnw spring-boot:run -pl examples/agent-demo
 ```
 
 agent 会在启动时连接 Gateway、跑完 5 步任务后自动退出。

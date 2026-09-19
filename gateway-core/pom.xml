@@ -114,6 +114,23 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <!-- fat jar 改名 -exec.jar，让主构件保持普通 jar 可被 agent-demo 依赖 -->
+          <classifier>exec</classifier>
+        </configuration>
+      </plugin>
+      <!-- 打出 test-jar，供 examples/agent-demo 复用 MockVredisServer 等测试夹具 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>test-jar</id>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
       <plugin>
         <groupId>org.jacoco</groupId>

@@ -86,6 +86,16 @@ MCP Inspector / Claude Desktop 配置示例：
 
 启动应用后访问 http://localhost:8080/swagger-ui.html 查看管理接口、确认接口、审计查询接口的完整 OpenAPI 文档。
 
+## 真实 AI Agent 集成
+
+项目附带一个可运行的 demo agent（examples/agent-demo），用 Spring AI 的 MCP Client 连接 Gateway，完成以下任务：
+- 调用 vredis_search 读取数据
+- 调用 vredis_upsert 写入数据
+- 遇到 WRITE 工具的 pending 状态时自动轮询并确认
+- 最后查询审计日志验证完整轨迹
+
+详细说明见 [examples/agent-demo/README.md](examples/agent-demo/README.md)。
+
 ## 工具与权限矩阵
 
 | 工具 | 副作用 | requiredRole | 需人工确认 | 说明 |

@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: agent-demo
+  # demo agent 自己不落库：禁用 Flyway、不建表（gateway-core 的 JPA/flyway 依赖会传导到这里）
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: none
+  datasource:
+    url: jdbc:h2:mem:agent_demo;DB_CLOSE_DELAY=-1
+
+# demo agent 连接的 Gateway 地址与凭据
+gateway:
+  base-url: http://localhost:8080
+  api-key: admin-key

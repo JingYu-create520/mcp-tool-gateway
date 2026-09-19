@@ -107,6 +107,34 @@
       <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
       <version>3.1.1</version>
     </dependency>
+
+    <!-- 工具联邦：熔断 + 超时隔离。
+         注意：resilience4j-spring-boot3 的 SpringBoot3Verifier 明确拒绝 Boot 4，
+         故只用无框架耦合的 core 模块，Registry Bean 由 UpstreamConfig 手工装配。 -->
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-circuitbreaker</artifactId>
+      <version>2.4.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.github.resilience4j</groupId>
+      <artifactId>resilience4j-timelimiter</artifactId>
+      <version>2.4.0</version>
+    </dependency>
+
+    <!-- 联邦集成测试复用 time/weather upstream（test scope，不参与生产链路） -->
+    <dependency>
+      <groupId>com.example.mcp</groupId>
+      <artifactId>upstream-time</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.example.mcp</groupId>
+      <artifactId>upstream-weather</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>

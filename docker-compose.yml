@@ -31,9 +31,34 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-mcp}
       # 未部署 vredis 时留空即可：工具调用会返回结构化的 vredis_unavailable JSON
       VREDIS_BASE_URL: ${VREDIS_BASE_URL:-}
+      # 工具联邦：upstream MCP Server 地址
+      GATEWAY_UPSTREAMS_TIME_URL: http://upstream-time:8090/mcp
+      GATEWAY_UPSTREAMS_WEATHER_URL: http://upstream-weather:8091/mcp
     depends_on:
       postgres:
         condition: service_healthy
+      upstream-time:
+        condition: service_started
+      upstream-weather:
+        condition: service_started
+
+  # 联邦演示 upstream：时间 MCP Server
+  upstream-time:
+    build:
+      context: .
+      dockerfile: examples/upstream-time/Dockerfile
+    container_name: mcp-upstream-time
+    ports:
+      - "8090:8090"
+
+  # 联邦演示 upstream：天气 MCP Server（假数据）
+  upstream-weather:
+    build:
+      context: .
+      dockerfile: examples/upstream-weather/Dockerfile
+    container_name: mcp-upstream-weather
+    ports:
+      - "8091:8091"
 
 volumes:
   pgdata:

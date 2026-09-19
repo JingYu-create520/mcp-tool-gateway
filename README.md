@@ -86,6 +86,36 @@ MCP Inspector / Claude Desktop 配置示例：
 
 启动应用后访问 http://localhost:8080/swagger-ui.html 查看管理接口、确认接口、审计查询接口的完整 OpenAPI 文档。
 
+## 工具联邦
+
+Gateway 支持把多个远程 upstream MCP Server 的工具聚合到同一个 tools/list（阶段六）：
+
+- **工具清单联邦**：`time__now`、`weather__forecast` 等远程工具以 `{upstream}__{tool}` 命名
+  与本地工具合并暴露，AI 看到一张统一清单
+- **调用路由**：按工具名自动路由到对应 upstream，结果包装成本地工具同款格式
+- **熔断 + 超时隔离**：Resilience4j（熔断 50% 失败率/滑动窗口 10，超时 5s），一个 upstream
+  挂掉不影响其他
+- **健康检查**：定时 ping（ShedLock 互斥），不健康的 upstream 自动从 tools/list 剔除，
+  恢复后自动加回
+- **权限统一**：upstream 工具同样注册进 ToolRegistry，requiredRole 按
+  defaultRequiredRole（默认 user）判定，工具名含 write/delete/upsert 自动提升为 admin
+
+配置示例（application.yml）：
+
+```yaml
+gateway:
+  upstreams:
+    upstreams:
+      - name: time
+        base-url: http://localhost:8090/mcp
+        enabled: true
+      - name: weather
+        base-url: http://localhost:8091/mcp
+        enabled: true
+```
+
+两个演示 upstream（时间、天气）在 examples/ 下，docker compose 已编排。
+
 ## 真实 AI Agent 集成
 
 项目附带一个可运行的 demo agent（examples/agent-demo），用 Spring AI 的 MCP Client 连接 Gateway，完成以下任务：

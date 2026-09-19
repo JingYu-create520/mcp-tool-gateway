@@ -23,6 +23,8 @@
     <module>gateway-security</module>
     <module>gateway-audit</module>
     <module>gateway-tools</module>
+    <module>examples/upstream-time</module>
+    <module>examples/upstream-weather</module>
     <module>examples/agent-demo</module>
   </modules>
 

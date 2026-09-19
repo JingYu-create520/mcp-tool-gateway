@@ -62,6 +62,12 @@ public class DynamicToolRegistry implements ApplicationRunner {
         }
     }
 
+    /** 注册外部（联邦）工具：绑定执行器并注册进 MCP Server（供 upstream 联邦层使用）。 */
+    public void registerExternalTool(ToolRegistry tool, Function<String, String> executor) {
+        registerExecutor(tool.getName(), executor);
+        upsert(tool);
+    }
+
     public void upsert(ToolRegistry tool) {
         unregister(tool.getName());
         if (tool.isEnabled()) {

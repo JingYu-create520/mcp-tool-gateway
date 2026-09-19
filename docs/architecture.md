@@ -134,6 +134,20 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
   输入快照 + SHA-256 指纹，执行"已确认"请求按（tool, caller, input_hash）匹配，
   并强制使用**确认时保存的输入**执行。
 
+- **ADR-010 联邦工具前缀命名**：upstream 工具以 `{upstreamName}__{toolName}`（双下划线）
+  重命名后并入统一工具清单，避免跨 upstream 的命名冲突；本地工具名不含双下划线，
+  路由歧义为零，且 AI 端能从名称直接辨识工具来源。
+- **ADR-011 选择 Resilience4j（core + spring-boot3 模块）**：熔断与超时隔离是 upstream
+  联邦的硬需求。选用 Resilience4j 2.4.0——CircuitBreaker/TimeLimiter 双层包裹
+  （超时在内、熔断在外，超时计为失败），配置走官方 spring-boot3 模块的 YAML 约定；
+  若未来该模块与 Boot 大版本不兼容，core 模块无框架耦合可独立保留。
+- **ADR-012 本地与联邦混合注册模式**：不改 DynamicToolRegistry 的本地注册机制，
+  upstream 作为"额外工具源"——FederatedToolRegistry 启动时与每轮健康检查后把
+  `{upstream}__{tool}` 经新增的 `registerExternalTool` 注册进同一 MCP 清单并落
+  ToolRegistry（sideEffect=READ，requiredRole 按 ADR 权限映射），执行器绑定到
+  UpstreamToolRouter；upstream 不可达时其工具自动从 tools/list 剔除。权限检查、
+  审计（Outbox）、admin 查询对联邦工具与本地工具一视同仁。
+
 ## 模块依赖
 
 ```

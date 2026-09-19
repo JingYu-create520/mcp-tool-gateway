@@ -1,0 +1,25 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: upstream-time
+  ai:
+    mcp:
+      server:
+        name: upstream-time
+        version: 1.0.0
+        type: SYNC
+        protocol: STREAMABLE
+  # 纯 MCP Server，不需要数据库；当被 gateway 联邦 IT 在同一 JVM 拉起时，
+  # classpath 上会有 gateway 带来的 JPA/Flyway，这里显式排除
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration
+      - org.springframework.boot.data.jpa.autoconfigure.JpaRepositoriesAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
+      # IT JVM 类路径并集上有 Spring Security，排除其自动配置以免 MCP 端点被默认锁死
+      - org.springframework.boot.security.autoconfigure.SecurityAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+      - org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterAutoConfiguration

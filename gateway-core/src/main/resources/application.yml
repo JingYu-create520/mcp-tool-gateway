@@ -27,6 +27,19 @@ server:
 vredis:
   base-url: ${VREDIS_BASE_URL:http://localhost:9090}
 
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+  timelimiter:
+    configs:
+      default:
+        timeoutDuration: 5s
+
 springdoc:
   api-docs:
     path: /v3/api-docs
@@ -34,6 +47,8 @@ springdoc:
     path: /swagger-ui.html
 
 # 开发/测试用内存 API Key（生产实现需改为数据库存储 + 密钥哈希）
+# 工具联邦的熔断/超时设置（Resilience4j core 模块由 UpstreamConfig 装配，
+# 因 resilience4j-spring-boot3 官方不支持 Boot 4，故不走其 YAML 约定）
 gateway:
   api-keys:
     keys:
@@ -48,6 +63,25 @@ gateway:
         tenantId: tenant-a
         roles:
           - user
+  # 工具联邦：远程 upstream MCP Server（阶段六）
+  upstreams:
+    health-check-fixed-delay-ms: ${GATEWAY_UPSTREAMS_HEALTH_CHECK_MS:30000}
+    circuitbreaker:
+      sliding-window-size: 10
+      failure-rate-threshold: 50
+      wait-duration-in-open-state-seconds: 30
+      permitted-number-of-calls-in-half-open-state: 3
+    timelimiter:
+      timeout-duration-seconds: 5
+    upstreams:
+      - name: time
+        base-url: ${GATEWAY_UPSTREAMS_TIME_URL:http://localhost:8090/mcp}
+        api-key: ""
+        enabled: true
+      - name: weather
+        base-url: ${GATEWAY_UPSTREAMS_WEATHER_URL:http://localhost:8091/mcp}
+        api-key: ""
+        enabled: true
 
 logging:
   level:

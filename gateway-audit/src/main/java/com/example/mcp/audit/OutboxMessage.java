@@ -14,14 +14,14 @@ import java.util.UUID;
 
 /**
  * Outbox 消息：与业务状态变更同事务写入（AuditEventPublisher，REQUIRED 传播），
- * 由 OutboxRelay 异步投递到 audit_log。status: PENDING / SENT / FAILED。
+ * 由 OutboxRelay 异步投递到 audit_log，投递成功即删除。
+ * status: PENDING（待投递）/ FAILED（重试耗尽，人工排查）。
  */
 @Entity
 @Table(name = "outbox_message")
 public class OutboxMessage {
 
     public static final String STATUS_PENDING = "PENDING";
-    public static final String STATUS_SENT = "SENT";
     public static final String STATUS_FAILED = "FAILED";
 
     @Id
@@ -50,9 +50,6 @@ public class OutboxMessage {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
-
-    @Column(name = "sent_at")
-    private Instant sentAt;
 
     public UUID getId() {
         return id;
@@ -116,13 +113,5 @@ public class OutboxMessage {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
-    }
-
-    public Instant getSentAt() {
-        return sentAt;
-    }
-
-    public void setSentAt(Instant sentAt) {
-        this.sentAt = sentAt;
     }
 }

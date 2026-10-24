@@ -39,6 +39,18 @@ class SanitizerTest {
     }
 
     @Test
+    void masksCompoundKeyVariants() {
+        // 变体后缀：access_token / clientSecret / refreshToken / privateKey 此前漏网
+        String sanitized = Sanitizer.sanitize(
+                "{\"access_token\":\"sk-live\",\"clientSecret\":\"cs\",\"refresh_token\":\"rt\",\"privateKey\":\"pk\"}");
+        assertThat(sanitized)
+                .contains("\"access_token\":\"***\"")
+                .contains("\"clientSecret\":\"***\"")
+                .contains("\"refresh_token\":\"***\"")
+                .contains("\"privateKey\":\"***\"");
+    }
+
+    @Test
     void fallsBackToRegexOnInvalidJson() {
         String raw = "{\"password\":\"abc\",\"broken";
         assertThat(Sanitizer.sanitize(raw)).contains("\"password\":\"***\"");

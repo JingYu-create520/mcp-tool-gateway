@@ -12,5 +12,5 @@ spring:
 
 # demo agent 连接的 Gateway 地址与凭据
 gateway:
-  base-url: http://localhost:8080
-  api-key: admin-key
+  base-url: ${GATEWAY_BASE_URL:http://localhost:8080}
+  api-key: ${GATEWAY_API_KEY:admin-key}

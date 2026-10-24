@@ -38,6 +38,14 @@ public class MockVredisServer {
         return server.baseUrl();
     }
 
+    /** 断言 upsert 确实打到了后端（E2E 对"副作用真的发生"的锚点）。
+     * 注意必须用实例 verify —— 静态 WireMock.verify 会连默认 8080 而非本实例的动态端口。 */
+    public void verifyUpsertCalled() {
+        server.verify(com.github.tomakehurst.wiremock.client.WireMock
+                .postRequestedFor(com.github.tomakehurst.wiremock.client.WireMock
+                        .urlEqualTo("/upsert")));
+    }
+
     public int port() {
         return server.port();
     }

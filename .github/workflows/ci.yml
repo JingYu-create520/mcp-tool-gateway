@@ -19,6 +19,32 @@ jobs:
           cache: maven
 
       # 单元测试 + H2 集成测试 + Testcontainers PostgreSQL 集成测试（ubuntu 自带 Docker）
-      # PG IT 会真实执行 V1~V3 迁移（JSONB/Outbox/ShedLock）并跑通完整业务流
+      # PG IT 真实执行 V1~V4 迁移（JSONB/Outbox/ShedLock/API Key）+ 工具目录读写；业务流 IT 跑 H2
       - name: Build & Test
         run: ./mvnw -B -ntp verify
+
+      # 覆盖率报告（verify 阶段已由 jacoco 插件生成 target/site/jacoco）
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: '**/target/site/jacoco*/**'
+          retention-days: 7
+
+      # IT 失败时保留完整测试报告，排查不依赖控制台摘要
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            '**/target/surefire-reports/**'
+            '**/target/failsafe-reports/**'
+          retention-days: 7
+
+      # 镜像冒烟：Dockerfile/compose 的路径与语法错误不能只在本地暴露
+      - name: Smoke build Docker images
+        run: |
+          docker compose build gateway upstream-time upstream-weather
+          docker compose config -q

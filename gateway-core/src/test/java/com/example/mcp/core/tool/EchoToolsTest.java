@@ -2,6 +2,7 @@ package com.example.mcp.core.tool;
 
 import com.example.mcp.audit.AuditEvent;
 import com.example.mcp.audit.AuditEventPublisher;
+import com.example.mcp.metrics.ToolMetrics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -15,8 +16,9 @@ class EchoToolsTest {
 
     private final AuditEventPublisher auditPublisher = mock(AuditEventPublisher.class);
     private final ToolCallAuditor auditor = mock(ToolCallAuditor.class);
+    private final ToolMetrics toolMetrics = mock(ToolMetrics.class);
     private final AuditEvent auditEvent = new AuditEvent();
-    private final EchoTools echoTools = new EchoTools(auditPublisher, auditor);
+    private final EchoTools echoTools = new EchoTools(auditPublisher, auditor, toolMetrics);
 
     @BeforeEach
     void setUp() {

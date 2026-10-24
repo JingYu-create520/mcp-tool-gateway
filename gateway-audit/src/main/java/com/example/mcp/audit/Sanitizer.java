@@ -24,7 +24,7 @@ public final class Sanitizer {
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
     private static final Pattern SENSITIVE_FIELD = Pattern.compile(
-            "(\"(?i:password|token|api[_-]?key|secret|authorization)\"\\s*:\\s*\")[^\"]*\"");
+            "(\"(?i:[a-z_-]*(?:password|token|secret|credential)[a-z_-]*|api[_-]?key|authorization)\"\\s*:\\s*\")[^\"]*\"");
 
     private Sanitizer() {
     }
@@ -44,7 +44,15 @@ public final class Sanitizer {
 
     private static boolean isSensitive(String key) {
         String normalized = key.toLowerCase().replace("_", "").replace("-", "");
-        return SENSITIVE_KEYS.contains(normalized);
+        // 精确集 + 变体后缀：access_token / clientSecret / refreshToken / privateKey 等同样脱敏。
+        // 宁多勿漏 —— 把 "tokencount" 这类误伤进来是可接受的，漏一个真实凭据不可接受。
+        return SENSITIVE_KEYS.contains(normalized)
+                || normalized.endsWith("token")
+                || normalized.endsWith("secret")
+                || normalized.endsWith("password")
+                || normalized.endsWith("credential")
+                || normalized.endsWith("key")
+                || normalized.startsWith("authorization");
     }
 
     @SuppressWarnings("unchecked")

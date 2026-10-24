@@ -11,11 +11,15 @@ import java.util.function.Function;
 /**
  * vredis 工具集：定义 + 执行器绑定。权限矩阵（docs/permission-matrix.md）：
  * search/stats = READ + user；upsert = WRITE + admin；delete = DANGEROUS + admin。
+ * requiredTenant = tenant-a：这套 vredis 工具仅对本租户调用方开放（威胁模型 I1）。
  * 注册链路：ExternalToolRegistrar（core）→ tool_registry + DynamicToolRegistry 执行器表
  * → 全部调用经 SafeToolExecutor（WRITE/DANGEROUS 必须人工确认），不走注解直通。
  */
 @Component
 public class VredisToolResolver implements ToolExecutorResolver {
+
+    /** 本套 vredis 工具归属的租户（多实例部署时可按环境配置）。 */
+    private static final String TENANT = "tenant-a";
 
     private static final String SEARCH_SCHEMA =
             "{\"type\":\"object\",\"properties\":{\"pattern\":{\"type\":\"string\",\"description\":\"键名匹配模式，例如 user:*\"}},\"required\":[\"pattern\"]}";
@@ -36,13 +40,13 @@ public class VredisToolResolver implements ToolExecutorResolver {
     public List<ToolDefinition> definitions() {
         return List.of(
                 new ToolDefinition("vredis_search", "按模式检索 vredis 中的键",
-                        SEARCH_SCHEMA, ToolAction.READ, "user", null),
+                        SEARCH_SCHEMA, ToolAction.READ, "user", TENANT),
                 new ToolDefinition("vredis_stats", "查看 vredis 的统计信息（键数量等）",
-                        STATS_SCHEMA, ToolAction.READ, "user", null),
+                        STATS_SCHEMA, ToolAction.READ, "user", TENANT),
                 new ToolDefinition("vredis_upsert", "写入/更新一个键值对（需人工确认）",
-                        UPSERT_SCHEMA, ToolAction.WRITE, "admin", null),
+                        UPSERT_SCHEMA, ToolAction.WRITE, "admin", TENANT),
                 new ToolDefinition("vredis_delete", "删除一个键（危险操作，需人工确认）",
-                        DELETE_SCHEMA, ToolAction.DANGEROUS, "admin", null));
+                        DELETE_SCHEMA, ToolAction.DANGEROUS, "admin", TENANT));
     }
 
     @Override

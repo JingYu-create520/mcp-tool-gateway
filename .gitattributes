@@ -1,0 +1,13 @@
+# 行尾规范：mvnw 必须保持 LF，否则 Windows autocrlf 环境重新 clone 后
+# Git Bash 执行会报 "bad interpreter"（^M）；.cmd/.bat 反之需要 CRLF。
+* text=auto
+
+mvnw           text eol=lf
+*.sh           text eol=lf
+*.cmd          text eol=crlf
+*.bat          text eol=crlf
+
+# 二进制资源不做转换
+*.jar          binary
+*.png          binary
+*.ico          binary

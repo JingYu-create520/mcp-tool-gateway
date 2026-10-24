@@ -1,5 +1,7 @@
 package com.example.mcp.agent;
 
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -9,8 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -31,7 +31,7 @@ import java.util.Map;
 public class AgentRunner {
 
     private static final Logger log = LoggerFactory.getLogger("AGENT-DEMO");
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = com.example.mcp.support.JsonMappers.MAPPER;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
 
@@ -89,17 +89,18 @@ public class AgentRunner {
             require(upsertSecondStatus, "executed", "步骤4 vredis_upsert(确认后)");
             log.info("[步骤4] vredis_upsert(确认后) → {}", secondUpsert);
 
-            // 步骤 5：查询审计轨迹（Outbox 异步投递有秒级延迟，轮询等待 relay 落库）
+            // 步骤 5：查询【本次确认单】的审计轨迹（PENDING → CONFIRMED → EXECUTING → EXECUTED
+            // 共 4 条；按 confirmationId 过滤，避免网关里的历史轨迹让轮询提前满足）
             int auditRows = 0;
             String auditBody = "{}";
             for (int attempt = 0; attempt < 12; attempt++) {
                 ResponseEntity<String> audit = rest.get()
-                        .uri("/admin/audit?toolName=vredis_upsert")
+                        .uri("/admin/audit?toolName=vredis_upsert&confirmationId={id}", confirmationId)
                         .retrieve()
                         .toEntity(String.class);
                 auditBody = audit.getBody();
                 auditRows = countRows(auditBody);
-                if (auditRows >= 3) {
+                if (auditRows >= 4) {
                     break;
                 }
                 try {
@@ -109,7 +110,7 @@ public class AgentRunner {
                     break;
                 }
             }
-            log.info("[步骤5] 审计轨迹（{} 条）: {}", auditRows, auditBody);
+            log.info("[步骤5] 确认单 {} 的审计轨迹（{} 条）: {}", confirmationId, auditRows, auditBody);
 
             return new DemoResult(searchStatus, upsertFirstStatus, confirmationId,
                     String.valueOf(confirmed.getStatusCode().value()), upsertSecondStatus, auditRows);

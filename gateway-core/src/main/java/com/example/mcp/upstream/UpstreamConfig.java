@@ -20,7 +20,7 @@ public class UpstreamConfig {
      */
     @Bean
     public CircuitBreakerRegistry circuitBreakerRegistry(UpstreamProperties properties) {
-        UpstreamProperties.CircuitBreaker settings = properties.resilience().circuitbreakerOrDefault();
+        UpstreamProperties.CircuitBreaker settings = properties.resilience().circuitbreaker();
         CircuitBreakerConfig config = CircuitBreakerConfig.custom()
                 .slidingWindowSize(settings.slidingWindowSize() == null ? 10 : settings.slidingWindowSize())
                 .failureRateThreshold(settings.failureRateThreshold() == null ? 50
@@ -38,7 +38,7 @@ public class UpstreamConfig {
     /** 超时隔离注册表：upstream 调用超过 timeout-duration-seconds 即掐断并计为失败。 */
     @Bean
     public TimeLimiterRegistry timeLimiterRegistry(UpstreamProperties properties) {
-        UpstreamProperties.TimeLimiter settings = properties.resilience().timelimiterOrDefault();
+        UpstreamProperties.TimeLimiter settings = properties.resilience().timelimiter();
         TimeLimiterConfig config = TimeLimiterConfig.custom()
                 .timeoutDuration(Duration.ofSeconds(
                         settings.timeoutDurationSeconds() == null ? 5 : settings.timeoutDurationSeconds()))

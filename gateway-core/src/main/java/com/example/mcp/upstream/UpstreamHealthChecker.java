@@ -1,27 +1,30 @@
 package com.example.mcp.upstream;
 
+import com.example.mcp.metrics.UpstreamMetrics;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 /**
- * upstream 健康检查：逐个 ping 并记录结果；每轮结束后触发联邦工具清单同步
- * （不健康的 upstream 自动从 tools/list 剔除，恢复后自动加回）。
+ * upstream 健康检查：逐个 ping 并通过 UpstreamMetrics 更新健康 Gauge；
+ * 每轮结束后触发联邦工具清单同步（不健康的 upstream 自动从 tools/list 剔除，
+ * 恢复后自动加回）。
  */
 @Component
 public class UpstreamHealthChecker {
 
-    private final Map<String, Boolean> health = new ConcurrentHashMap<>();
-
     private final McpClientPool pool;
     private final FederatedToolRegistry federatedToolRegistry;
+    private final UpstreamMetrics upstreamMetrics;
 
-    public UpstreamHealthChecker(McpClientPool pool, FederatedToolRegistry federatedToolRegistry) {
+    public UpstreamHealthChecker(McpClientPool pool,
+                                 FederatedToolRegistry federatedToolRegistry,
+                                 UpstreamMetrics upstreamMetrics) {
         this.pool = pool;
         this.federatedToolRegistry = federatedToolRegistry;
+        this.upstreamMetrics = upstreamMetrics;
+        // 健康 Gauge 随上下文启动即注册（初值 1，首轮 ping 后更新为真实状态）
+        pool.allClients().forEach(client -> upstreamMetrics.bindHealth(client.getName()));
     }
 
     @Scheduled(
@@ -29,15 +32,10 @@ public class UpstreamHealthChecker {
             initialDelayString = "${gateway.upstreams.health-check-initial-delay-ms:3000}")
     @SchedulerLock(name = "upstreamHealthCheck", lockAtMostFor = "1m", lockAtLeastFor = "5s")
     public void check() {
-        pool.allClients().forEach(client -> health.put(client.getName(), client.ping()));
+        pool.allClients().forEach(client -> {
+            boolean healthy = client.ping();
+            upstreamMetrics.updateHealth(client.getName(), healthy);
+        });
         federatedToolRegistry.syncUpstreamTools();
-    }
-
-    public boolean isHealthy(String name) {
-        return health.getOrDefault(name, true);
-    }
-
-    public Map<String, Boolean> snapshot() {
-        return Map.copyOf(health);
     }
 }

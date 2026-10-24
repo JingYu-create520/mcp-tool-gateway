@@ -1,0 +1,12 @@
+# 构建上下文瘦身：只排除与三个镜像构建无关的东西。
+# 注意 target/ 不能排除 —— Dockerfile 的 COPY 依赖 Maven 预构建的 *-exec.jar。
+.git
+.gitignore
+.env
+.env.example
+docs
+examples/agent-demo
+README.md
+*.log
+.idea
+.vscode

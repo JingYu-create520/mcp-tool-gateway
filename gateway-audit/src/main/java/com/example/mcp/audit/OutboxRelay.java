@@ -8,13 +8,13 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
- * Outbox 投递器：每 5 秒扫描 PENDING 消息，写入 audit_log 后标记 SENT；
+ * Outbox 投递器：每 5 秒扫描 PENDING 消息，写入 audit_log 后删除消息
+ * （audit_log 是唯一证据链，outbox 只是传输载体，投递完不留行、表不膨胀）；
  * 失败重试 3 次后标记 FAILED（保留现场供人工排查）。ShedLock 防多实例并发扫描。
- * audit_log 主键 = 事件 id：并发重复投递时主键冲突视为已投递（幂等消费）。
+ * audit_log 主键 = 事件 id：崩溃在"落库后、删除前"时重投会主键冲突，视为已投递（幂等）。
  */
 @Component
 public class OutboxRelay {
@@ -51,10 +51,10 @@ public class OutboxRelay {
         try {
             AuditEvent event = JSON.readValue(message.getPayload(), AuditEvent.class);
             auditRepository.save(event);
-            markSent(message);
+            outboxRepository.delete(message);
         } catch (DataIntegrityViolationException duplicate) {
-            // 同一事件 id 已落库：并发投递的重复消息，按成功处理（幂等）
-            markSent(message);
+            // 同一事件 id 已落库：并发投递或崩溃后重投的重复消息，按成功处理（幂等）
+            outboxRepository.delete(message);
         } catch (Exception e) {
             int retries = message.getRetryCount() + 1;
             message.setRetryCount(retries);
@@ -68,11 +68,5 @@ public class OutboxRelay {
             }
             outboxRepository.save(message);
         }
-    }
-
-    private void markSent(OutboxMessage message) {
-        message.setStatus(OutboxMessage.STATUS_SENT);
-        message.setSentAt(Instant.now());
-        outboxRepository.save(message);
     }
 }

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔐</text></svg>">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>确认台 — mcp-tool-gateway</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #14161a; color: #d8dce2;
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    padding: 14px 20px; background: #1c1f25; border-bottom: 1px solid #2a2e35;
+  }
+  header h1 { font-size: 16px; margin: 0 auto 0 0; }
+  header input, header select {
+    background: #12141a; color: #d8dce2; border: 1px solid #343a44;
+    border-radius: 6px; padding: 6px 10px;
+  }
+  header input[type=password] { width: 260px; }
+  button {
+    background: #2b6cb0; color: #fff; border: 0; border-radius: 6px;
+    padding: 6px 14px; cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  button.danger { background: #b03a2e; }
+  button.ok { background: #2f855a; }
+  main { padding: 16px 20px 40px; }
+  .msg { margin: 8px 0; padding: 8px 12px; border-radius: 6px; display: none; }
+  .msg.err { display: block; background: #3b1d1a; color: #f5b7ae; }
+  .msg.info { display: block; background: #1d313b; color: #a9d3ea; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #262b33; vertical-align: top; }
+  th { color: #8b939e; font-weight: 600; white-space: nowrap; }
+  td.id { font-family: Consolas, monospace; font-size: 12px; }
+  .pill { padding: 2px 10px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+  .PENDING   { background: #4a3b12; color: #f0c674; }
+  .CONFIRMED { background: #153b2c; color: #7fd6a8; }
+  .EXECUTING { background: #14384a; color: #7fc4e8; }
+  .EXECUTED  { background: #173d2a; color: #86e0ae; }
+  .REJECTED  { background: #3b1d1a; color: #f0968a; }
+  .EXPIRED   { background: #2c2c34; color: #a3a7b5; }
+  pre {
+    margin: 0; max-width: 460px; max-height: 120px; overflow: auto;
+    background: #101216; border: 1px solid #262b33; border-radius: 6px;
+    padding: 6px 8px; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  }
+  .empty { color: #8b939e; margin-top: 30px; text-align: center; }
+  footer { padding: 10px 20px; color: #6a7280; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>人工确认台 <small style="color:#6a7280;font-weight:400">— WRITE / DANGEROUS 工具的人工把关</small></h1>
+  <input type="password" id="apiKey" placeholder="X-API-Key（需含 confirmer 角色）" autocomplete="off">
+  <select id="statusFilter">
+    <option value="PENDING">待确认 (PENDING)</option>
+    <option value="CONFIRMED">已确认待执行 (CONFIRMED)</option>
+    <option value="EXECUTED">已执行 (EXECUTED)</option>
+    <option value="REJECTED">已拒绝 (REJECTED)</option>
+    <option value="EXPIRED">已过期 (EXPIRED)</option>
+    <option value="PENDING,CONFIRMED,EXECUTING,EXECUTED,REJECTED,EXPIRED">全部</option>
+  </select>
+  <button id="reload">刷新</button>
+  <label style="color:#8b939e"><input type="checkbox" id="auto" checked> 每 5 秒自动刷新</label>
+</header>
+<main>
+  <div id="msg" class="msg"></div>
+  <div id="content"></div>
+</main>
+<footer>
+  确认动作仅 confirmer 角色可发起（X-API-Key 认证）。确认后需由<strong>同一调用方、同一输入</strong>再次触发工具才会真正执行。
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
+
+function showMsg(text, cls) {
+  const el = $("msg");
+  el.textContent = text;
+  el.className = "msg " + cls;
+}
+
+async function load() {
+  const key = $("apiKey").value.trim();
+  const status = $("statusFilter").value;
+  const content = $("content");
+  if (!key) {
+    showMsg("请先在上方输入 API Key（需要含 confirmer 角色，例如种子 admin-key）。", "info");
+    content.innerHTML = "";
+    return;
+  }
+  let rows;
+  try {
+    const resp = await fetch("/confirmations?status=" + encodeURIComponent(status), {
+      headers: { "X-API-Key": key }
+    });
+    if (resp.status === 401 || resp.status === 403) {
+      showMsg("凭据无效或缺少 confirmer 角色（HTTP " + resp.status + "）——确认台与 AI 客户端凭据隔离。", "err");
+      content.innerHTML = "";
+      return;
+    }
+    if (!resp.ok) {
+      showMsg("查询失败：HTTP " + resp.status, "err");
+      return;
+    }
+    rows = await resp.json();
+    $("msg").className = "msg";
+  } catch (e) {
+    showMsg("请求失败：" + e.message, "err");
+    return;
+  }
+
+  if (!rows.length) {
+    content.innerHTML = '<div class="empty">该状态下没有确认单。</div>';
+    return;
+  }
+  content.innerHTML =
+    "<table><thead><tr>" +
+    "<th>状态</th><th>工具</th><th>调用方</th><th>输入</th><th>确认单 ID</th><th>创建 / 有效期</th><th>操作</th>" +
+    "</tr></thead><tbody>" +
+    rows.map((r) => `
+      <tr>
+        <td><span class="pill ${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+        <td>${escapeHtml(r.toolName)}</td>
+        <td>${escapeHtml(r.callerId)}<br><small style="color:#6a7280">${escapeHtml(r.tenantId)}</small></td>
+        <td><pre>${escapeHtml(r.input)}</pre>${r.result ? '<pre style="color:#7fd6a8">' + escapeHtml(r.result) + "</pre>" : ""}</td>
+        <td class="id">${escapeHtml(r.confirmationId)}</td>
+        <td style="white-space:nowrap"><small>${fmtTime(r.createdAt)}<br>${fmtTime(r.expiresAt)}</small></td>
+        <td>${r.status === "PENDING" ? `
+          <button class="ok" data-act="confirm" data-id="${escapeHtml(r.confirmationId)}">确认</button>
+          <button class="danger" data-act="reject" data-id="${escapeHtml(r.confirmationId)}">拒绝</button>` : "—"}</td>
+      </tr>`).join("") +
+    "</tbody></table>";
+}
+
+async function act(confirmationId, action) {
+  // 把关动作防误触：拒绝/确认都不可逆（确认后 AI 可执行，拒绝后单据作废）
+  const verb = action === "confirm" ? "确认" : "拒绝";
+  if (!window.confirm(`对确认单 ${confirmationId.slice(0, 8)}… 执行「${verb}」？)) {
+    return;
+  }
+  const key = $("apiKey").value.trim();
+  try {
+    const resp = await fetch(`/confirmations/${confirmationId}/${action}`, {
+      method: "POST", headers: { "X-API-Key": key }
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      showMsg(`${action} 失败：HTTP ${resp.status} ${text.slice(0, 200)}`, "err");
+      return;
+    }
+    const row = await resp.json();
+    showMsg(`确认单 ${confirmationId.slice(0, 8)}… → ${row.status}`, "info");
+  } catch (e) {
+    showMsg("请求失败：" + e.message, "err");
+  }
+  load();
+}
+
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (btn) act(btn.dataset.id, btn.dataset.act);
+});
+$("reload").addEventListener("click", load);
+// 两个过滤输入变化都立即加载：状态切换要等 5 秒自动刷新的话，用户会以为切换没生效
+$("apiKey").addEventListener("change", () => {
+  sessionStorage.setItem("console.key", $("apiKey").value);
+  load();
+});
+$("statusFilter").addEventListener("change", load);
+setInterval(() => { if ($("auto").checked) load(); }, 5000);
+$("apiKey").value = sessionStorage.getItem("console.key") || "";
+load();
+</script>
+</body>
+</html>

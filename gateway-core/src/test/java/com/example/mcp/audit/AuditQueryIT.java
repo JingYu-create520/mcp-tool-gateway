@@ -12,6 +12,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.UUID;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -77,7 +78,51 @@ class AuditQueryIT {
         assertThat(totalPages(page0)).isEqualTo(2);
     }
 
+    @Test
+    void confirmationIdFilterReturnsOnlyMatchingTrail() {
+        String cid = UUID.randomUUID().toString();
+        Instant now = Instant.now();
+        seed("cid_probe", "user-1", "PENDING", now.minus(Duration.ofMinutes(3)), cid);
+        seed("cid_probe", "user-1", "CONFIRMED", now.minus(Duration.ofMinutes(2)), cid);
+        seed("cid_probe", "user-1", "EXECUTING", now.minus(Duration.ofMinutes(1)), cid);
+        seed("cid_probe", "user-1", "EXECUTED", now, cid);
+        seed("cid_probe", "user-2", "PENDING", now); // 同工具无 confirmationId，不应混入
+
+        // 等待本测试自己的 4 条轨迹落库（不能复用 awaitSeeded——它锚定的是另一个测试的种子数）
+        for (int i = 0; i < 30; i++) {
+            relay.relayOnce();
+            if (total(query(Map.of("toolName", "cid_probe", "confirmationId", cid))) == 4) {
+                break;
+            }
+        }
+
+        Map<String, Object> trail = query(Map.of("toolName", "cid_probe", "confirmationId", cid));
+        assertThat(total(trail)).isEqualTo(4);
+        assertThat(content(trail)).allSatisfy(event ->
+                assertThat(event.get("confirmationId")).isEqualTo(cid));
+    }
+
+    @Test
+    void negativePageParameterIs400Not500() {
+        org.springframework.web.client.RestClientResponseException e =
+                org.assertj.core.api.Assertions.catchThrowableOfType(
+                        org.springframework.web.client.RestClientResponseException.class,
+                        () -> client.get()
+                                .uri((UriBuilder builder) -> {
+                                    builder.path("/admin/audit");
+                                    builder.queryParam("page", "-1");
+                                    return builder.build();
+                                })
+                                .retrieve()
+                                .toEntity(String.class));
+        assertThat(e.getStatusCode().value()).isEqualTo(400);
+    }
+
     private void seed(String toolName, String callerId, String status, Instant createdAt) {
+        seed(toolName, callerId, status, createdAt, null);
+    }
+
+    private void seed(String toolName, String callerId, String status, Instant createdAt, String confirmationId) {
         AuditEvent event = new AuditEvent();
         event.setCallerId(callerId);
         event.setTenantId("tenant-a");
@@ -85,6 +130,7 @@ class AuditQueryIT {
         event.setInput("{\"k\":\"v\"}");
         event.setStatus(status);
         event.setCreatedAt(createdAt);
+        event.setConfirmationId(confirmationId);
         publisher.publish(event);
     }
 

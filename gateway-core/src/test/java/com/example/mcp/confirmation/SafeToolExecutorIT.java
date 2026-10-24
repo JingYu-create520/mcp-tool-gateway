@@ -1,5 +1,6 @@
 package com.example.mcp.confirmation;
 
+import com.example.mcp.ratelimit.ToolRateLimitException;
 import com.example.mcp.registry.ToolRegistryRequest;
 import com.example.mcp.registry.ToolRegistryService;
 import com.example.mcp.security.CallerContext;
@@ -14,6 +15,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -30,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class SafeToolExecutorIT {
 
     private static final String WRITE_TOOL = "executor_probe";
+    private static final String RATE_TOOL = "rate_probe";
 
     @Autowired
     SafeToolExecutor executor;
@@ -87,11 +90,17 @@ class SafeToolExecutorIT {
         UUID confirmationId = UUID.fromString((String) first.get("confirmationId"));
         confirmationService.confirm(confirmationId);
 
+        // 真正验证"用确认时保存的输入执行"：篡改库里的 input 列（保留 inputHash 与 CONFIRMED 状态），
+        // 若实现错误地使用调用方本次输入而非 approved.getInput()，result 将不含篡改标记
+        PendingExecution stored = pendingRepository.findByConfirmationId(confirmationId).orElseThrow();
+        stored.setInput("{\"k\":\"TAMPERED-MARKER\"}");
+        pendingRepository.save(stored);
+
         // result 列是 JSONB/JSON，桩执行器必须返回合法 JSON
         Map<String, Object> second = executor.execute(WRITE_TOOL, input,
                 exec -> "{\"input\":" + exec + "}");
         assertThat(second).containsEntry("status", "executed");
-        assertThat(second).containsEntry("result", "{\"input\":" + input + "}");
+        assertThat(second).containsEntry("result", "{\"input\":{\"k\":\"TAMPERED-MARKER\"}}");
         assertThat(second).containsEntry("confirmationId", confirmationId.toString());
         assertThat(pendingRepository.findByConfirmationId(confirmationId).orElseThrow().getStatus())
                 .isEqualTo(ConfirmationStatus.EXECUTED);
@@ -106,10 +115,114 @@ class SafeToolExecutorIT {
     }
 
     @Test
+    void tenantMismatchDeniedOnVredisTool() {
+        // vredis 工具 requiredTenant=tenant-a：其他租户的调用方即使角色够也被拒
+        authenticate("outsider", "tenant-b", Set.of("admin", "user"));
+        assertThatThrownBy(() -> executor.execute("vredis_search", "{\"pattern\":\"x:*\"}", input -> "no"))
+                .isInstanceOf(PermissionDeniedException.class)
+                .hasMessageContaining("tenant-a");
+    }
+
+    @Test
     void missingToolThrows() {
         authenticate("admin-user", "tenant-a", Set.of("admin"));
         assertThatThrownBy(() -> executor.execute("no_such_tool", "{}", input -> "no"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void rateLimitedToolBlocksExcessCalls() {
+        ensureRateLimitedTool();
+        authenticate("rate-caller", "tenant-a", Set.of("admin"));
+
+        assertThat(executor.execute(RATE_TOOL, "{}", input -> "{\"ok\":true}"))
+                .containsEntry("status", "executed");
+        // rateLimit=1：窗口内第二次调用被拒
+        assertThatThrownBy(() -> executor.execute(RATE_TOOL, "{}", input -> "{\"ok\":true}"))
+                .isInstanceOf(ToolRateLimitException.class);
+    }
+
+    @Test
+    void claimedConfirmationPreventsDoubleExecution() {
+        ensureWriteTool();
+        authenticate("admin-user", "tenant-a", Set.of("admin"));
+        String input = "{\"k\":\"race\"}";
+
+        Map<String, Object> first = executor.execute(WRITE_TOOL, input, exec -> "no");
+        UUID confirmationId = UUID.fromString((String) first.get("confirmationId"));
+        confirmationService.confirm(confirmationId);
+
+        // 模拟另一实例已把这条确认 claim 走（CONFIRMED → EXECUTING）
+        assertThat(pendingRepository.transitionStatus(
+                confirmationId, ConfirmationStatus.CONFIRMED, ConfirmationStatus.EXECUTING))
+                .isEqualTo(1);
+
+        // 同输入的并发调用：抢不到已确认记录，落回创建新 PENDING，绝不双执行
+        Map<String, Object> second = executor.execute(WRITE_TOOL, input,
+                exec -> {
+                    throw new AssertionError("未 claim 成功不应执行");
+                });
+        assertThat(second).containsEntry("status", "pending");
+        assertThat(second.get("confirmationId")).isNotEqualTo(confirmationId.toString());
+    }
+
+    @Test
+    void expiredConfirmationIsNotExecutable() {
+        ensureWriteTool();
+        authenticate("admin-user", "tenant-a", Set.of("admin"));
+        String input = "{\"k\":\"stale\"}";
+
+        Map<String, Object> first = executor.execute(WRITE_TOOL, input, exec -> "no");
+        UUID confirmationId = UUID.fromString((String) first.get("confirmationId"));
+        confirmationService.confirm(confirmationId);
+
+        // 模拟确认有效期已过：过期确认不能被执行
+        PendingExecution record = pendingRepository.findByConfirmationId(confirmationId).orElseThrow();
+        record.setExpiresAt(Instant.now().minusSeconds(1));
+        pendingRepository.save(record);
+
+        // 同输入再次调用：查不到有效确认 → 创建新 PENDING，绝不执行
+        Map<String, Object> second = executor.execute(WRITE_TOOL, input,
+                exec -> {
+                    throw new AssertionError("过期确认不应执行");
+                });
+        assertThat(second).containsEntry("status", "pending");
+        assertThat(second.get("confirmationId")).isNotEqualTo(confirmationId.toString());
+    }
+
+    @Test
+    void failedExecutionRevertsToConfirmed() {        ensureWriteTool();
+        authenticate("admin-user", "tenant-a", Set.of("admin"));
+        String input = "{\"k\":\"revert\"}";
+
+        Map<String, Object> first = executor.execute(WRITE_TOOL, input, exec -> "no");
+        UUID confirmationId = UUID.fromString((String) first.get("confirmationId"));
+        confirmationService.confirm(confirmationId);
+
+        // 执行失败：退回 CONFIRMED，确认机会保留给下次调用
+        assertThatThrownBy(() -> executor.execute(WRITE_TOOL, input, exec -> {
+            throw new IllegalStateException("后端连接失败");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(pendingRepository.findByConfirmationId(confirmationId).orElseThrow().getStatus())
+                .isEqualTo(ConfirmationStatus.CONFIRMED);
+
+        // 无需重新确认即可重试
+        assertThat(executor.execute(WRITE_TOOL, input, exec -> "{\"retry\":true}"))
+                .containsEntry("status", "executed");
+    }
+
+    private void ensureRateLimitedTool() {
+        if (toolRegistryService.findByName(RATE_TOOL).isEmpty()) {
+            toolRegistryService.register(new ToolRegistryRequest(
+                    RATE_TOOL,
+                    "限流探针（每 60 秒 1 次）",
+                    "{\"type\":\"object\"}",
+                    ToolAction.READ,
+                    null,
+                    null,
+                    1,
+                    true));
+        }
     }
 
     private void ensureWriteTool() {

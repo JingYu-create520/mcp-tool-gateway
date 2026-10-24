@@ -1,0 +1,32 @@
+groups:
+  - name: mcp-tool-gateway
+    rules:
+      # 审计 Outbox 重试耗尽：审计事件未落库（"审计不丢"承诺的告警落点）
+      - alert: OutboxMessagesFailed
+        expr: mcp_outbox_messages{status="FAILED"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox 存在重试耗尽的失败消息"
+          description: "FAILED={{ $value }}：有审计事件未落入 audit_log，人工排查后调 POST /admin/audit/outbox/{id}/retry 重驱。"
+
+      # 网关自身不可抓取（进程挂/端口不通）
+      - alert: GatewayScrapeDown
+        expr: up{job="mcp-tool-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus 无法抓取网关指标"
+          description: "持续 2 分钟抓取失败，检查 mcp-gateway 容器状态。"
+
+      # 确认单积压：待确认数量异常增长（AI 刷 pending 或确认台没人处理）
+      - alert: PendingConfirmationsBacklog
+        expr: sum(mcp_outbox_messages{status="PENDING"}) > 20
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Outbox PENDING 积压超过 20 条"
+          description: "持续 10 分钟高积压：可能是确认台无人处理，或投递链路异常。"

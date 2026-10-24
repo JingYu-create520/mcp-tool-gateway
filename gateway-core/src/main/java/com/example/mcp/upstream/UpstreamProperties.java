@@ -14,21 +14,16 @@ public record UpstreamProperties(List<Upstream> upstreams, Resilience resilience
 
     public UpstreamProperties {
         upstreams = upstreams == null ? List.of() : List.copyOf(upstreams);
-        resilience = resilience == null ? Resilience.defaults() : resilience;
+        resilience = resilience == null
+                ? new Resilience(new CircuitBreaker(10, 50, 30, 3), new TimeLimiter(5))
+                : resilience;
     }
 
     public record Resilience(CircuitBreaker circuitbreaker, TimeLimiter timelimiter) {
 
-        public static Resilience defaults() {
-            return new Resilience(new CircuitBreaker(10, 50, 30, 3), new TimeLimiter(5));
-        }
-
-        public CircuitBreaker circuitbreakerOrDefault() {
-            return circuitbreaker == null ? new CircuitBreaker(10, 50, 30, 3) : circuitbreaker;
-        }
-
-        public TimeLimiter timelimiterOrDefault() {
-            return timelimiter == null ? new TimeLimiter(5) : timelimiter;
+        public Resilience {
+            circuitbreaker = circuitbreaker == null ? new CircuitBreaker(10, 50, 30, 3) : circuitbreaker;
+            timelimiter = timelimiter == null ? new TimeLimiter(5) : timelimiter;
         }
     }
 
@@ -47,7 +42,6 @@ public record UpstreamProperties(List<Upstream> upstreams, Resilience resilience
             String baseUrl,
             String apiKey,
             Boolean enabled,
-            Integer healthCheckIntervalSeconds,
             String defaultRequiredRole) {
 
         public boolean isEnabled() {

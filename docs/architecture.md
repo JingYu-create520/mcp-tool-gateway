@@ -7,7 +7,7 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
                                       │ 1. API Key 认证           （阶段二）
                                       │ 2. 权限策略检查             （阶段二）
                                       │ 3. 副作用分级 ToolAction     （阶段三执行）
-                                      │ 4. 审计记录（Okapi Outbox）   （阶段四）
+                                      │ 4. 审计记录（事务性 Outbox）  （阶段四）
                                       ▼
                  READ ──────────────▶ 直通执行 ──▶ HTTP Adapter ──▶ vredis / 本地工具
                  WRITE / DANGEROUS ──▶ 创建 pending ──▶ 人工确认 ──▶ 执行 （阶段三）
@@ -18,9 +18,9 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
 | 模块 | 职责 | 主要落地阶段 |
 |---|---|---|
 | gateway-core | Spring Boot 主应用；MCP Server 装配（Streamable HTTP）；工具注册；echo 自检工具 | 阶段一 |
-| gateway-security | `ToolAction` 分级；API Key 认证；权限策略引擎；人工确认状态机（pending） | 阶段二/三 |
+| gateway-security | `ToolAction` 分级；API Key 认证；URL 层授权 | 阶段二 |
 | gateway-audit | 事务性 Outbox 写入与投递；审计记录存储与查询 | 阶段四 |
-| gateway-tools | vredis 工具封装；统一 HTTP Adapter（超时/重试/熔断） | 阶段五 |
+| gateway-tools | vredis 工具封装；统一 HTTP Adapter（显式超时；失败转结构化 vredis_unavailable JSON） | 阶段五 |
 
 ## 关键设计决策
 
@@ -32,8 +32,12 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
    跟踪 MCP 2025-11-25 规范，不支持 MRTR 的 `InputRequiredResult` 重放。
    因此：WRITE/DANGEROUS 工具被调用时创建 pending 记录并立即返回
    "等待确认"结果；AI 客户端通过查询工具轮询结果；approve/reject 动作
-   只能来自人工确认台（与 AI 客户端凭据隔离，见威胁模型 T4）。
-   状态机：`PENDING → APPROVED / REJECTED / EXPIRED → EXECUTING → SUCCEEDED / FAILED`。
+   只能来自 confirmer 角色凭据（与普通 AI 客户端 Key 隔离，见威胁模型 S3/E3）。
+   状态机：`PENDING → CONFIRMED / REJECTED / EXPIRED`；
+   `CONFIRMED → EXECUTING（原子 claim）→ EXECUTED`。
+   执行前用数据库条件 UPDATE 原子 claim（CONFIRMED→EXECUTING），多实例下同一条
+   确认记录只被一个请求执行；执行失败退回 CONFIRMED，重试不消耗确认机会；
+   EXECUTING 卡死（进程崩溃）超过确认有效期后由过期扫描置 EXPIRED。
 
 3. **审计走事务性 Outbox**（阶段四）：业务事务内写 outbox 表（PostgreSQL 16），
    保证"执行了工具"与"留下了审计"原子提交；后台任务投递落审计表，
@@ -47,7 +51,6 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
    （upsert/remove + `tools/list_changed` 通知）。注解声明的工具（echo）与
    数据库工具并存；`ToolAction` 统一映射 MCP 注解 hints
    （READ→readOnly=true，WRITE→destructive=false，DANGEROUS→destructive=true）。
-   工具执行当前为桩实现，阶段五由 HTTP Adapter 替换。
 
 5. **后端统一 HTTP Adapter**：网关不直连 vredis 私有协议，只经 HTTP 调用，
    便于集中做超时、重试、熔断与沙箱化。
@@ -60,13 +63,14 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
 
 8. **认证与权限的两层模型**（阶段二落地）：
    - **URL 层**（SecurityConfig，Spring Security 7）：`/admin/**` 需 `admin` 角色，
-     `/mcp/**`、`/confirmations/**` 需认证（任意有效 Key）；未认证统一 401
+     `/mcp/**` 需认证（任意有效 Key），`/confirmations/**` 需 confirmer 角色；未认证统一 401
      （显式 `HttpStatusEntryPoint`，Spring Security 默认是 403，必须覆盖），
      已认证权限不足 403。
    - **API Key 认证**：`ApiKeyAuthFilter` 从 `X-API-Key` 头解出身份写入
      SecurityContext（principal = CallerContext，authorities = ROLE_*）；
-     无 Key/无效 Key 静默放行，由授权层统一裁决。Key 存储当前为
-     application.yml 内存实现（开发/测试），生产换数据库 + 哈希。
+     无 Key/无效 Key 静默放行，由授权层统一裁决。Key 存 api_key 表、只存
+     SHA-256 哈希（V4 迁移）；种子 Key 由 DbApiKeySeeder 写入，可用
+     `gateway.seed-api-keys=false` 关闭（暴露在不可信网络的部署必须关闭）。
    - **工具层**（PermissionChecker）：调用工具时校验 registry 行上的
      `requiredRole` / `requiredTenant`；MCP 调用内拒绝不是 HTTP 状态码，
      而是返回 `isError=true` + `permission_denied` 前缀的工具结果（MCP 语义），
@@ -76,9 +80,10 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
    WRITE/DANGEROUS 工具统一经 `SafeToolExecutor` 执行：READ 直通；
    WRITE/DANGEROUS 创建 pending（默认 30 分钟过期，`input` 存快照 + SHA-256 指纹）。
    状态机 `PENDING → CONFIRMED / REJECTED / EXPIRED`，`CONFIRMED → EXECUTED`；
-   confirm/reject **幂等**（非法前置不报错，返回当前状态），乐观锁防并发改坏。
-   确认入口两个：REST `/confirmations/{id}/confirm|reject` 与
-   MCP 工具 `get_confirmation_status`（AI 客户端轮询查询）。
+   confirm/reject **幂等**（非法前置不报错，返回当前状态）；执行路径用数据库条件
+   UPDATE 原子 claim（见上文状态机），乐观锁兜底防并发改坏。
+   确认入口唯一：REST `/confirmations/{id}/confirm|reject`（confirmer 角色）；
+   MCP 工具 `get_confirmation_status` 只是 AI 客户端的轮询查询入口（限本人确认单）。
    执行"已确认"请求时匹配同工具+同调用方+同输入指纹的 CONFIRMED 记录，
    并【使用确认时保存的输入】执行（防确认后换参攻击）。
    过期扫描 `ExpirationScheduler`（5 分钟一轮）由 ShedLock
@@ -95,8 +100,10 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
       （ConfirmationService 的五个状态转换）时与业务**原子提交**，保证审计不丢；
       无事务场景（READ 直通、DENIED）独立提交。脱敏（Sanitizer）在写 outbox 前完成。
     - **投递**：`OutboxRelay` 每 5 秒扫描 PENDING（ShedLock 互斥），写入 audit_log
-      后标记 SENT；失败重试 3 次后 FAILED。audit_log 主键 = 事件 id（赋值式主键 +
-      `Persistable.isNew()=true`），并发重复投递由主键冲突去重 —— **at-least-once + 幂等消费**。
+      后删除消息（outbox 只是传输载体，audit_log 是唯一证据链，表不膨胀）；
+      最多尝试 3 次（重试耗尽即 FAILED，保留现场）。audit_log 主键 = 事件 id（赋值式主键 +
+      `Persistable.isNew()=true`），崩溃在"落库后、删除前"时重投由主键冲突去重 ——
+      **at-least-once + 幂等消费**。
     - **接入点**：ConfirmationService（PENDING/CONFIRMED/REJECTED/EXECUTED/EXPIRED）、
       SafeToolExecutor（READ 的 EXECUTED 带 durationMs、DENIED）、
       注解工具（echo、get_confirmation_status 经 ToolCallAuditor 直接发布）。
@@ -107,9 +114,9 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
 
 | 端点 | 说明 |
 |---|---|
-| POST /mcp | MCP Streamable HTTP，需认证（X-API-Key）；当前工具：`echo`、`vredis_search`（桩实现）、`get_confirmation_status` |
+| POST /mcp | MCP Streamable HTTP，需认证（X-API-Key）；工具清单（8 个：echo、get_confirmation_status、4 个 vredis、2 个联邦）见 docs/permission-matrix.md |
 | /admin/tools | 工具目录 CRUD，需 admin 角色；实时联动 MCP Server |
-| /confirmations/** | 人工确认入口：`{id}/confirm`、`{id}/reject`、`{id}`（查询），需认证 |
+| /confirmations/** | 人工确认入口：`{id}/confirm`、`{id}/reject`、`{id}`（查询），需 confirmer 角色 |
 | /admin/audit | 审计查询：callerId/toolName/status/from/to 过滤 + 分页，需 admin 角色 |
 
 ## ADR 决策记录（编号沿用项目惯例，001–005 对应上文决策 1–5 的早期定稿）
@@ -137,16 +144,26 @@ AI Client ──MCP(Streamable HTTP)──▶ MCP Gateway
 - **ADR-010 联邦工具前缀命名**：upstream 工具以 `{upstreamName}__{toolName}`（双下划线）
   重命名后并入统一工具清单，避免跨 upstream 的命名冲突；本地工具名不含双下划线，
   路由歧义为零，且 AI 端能从名称直接辨识工具来源。
-- **ADR-011 选择 Resilience4j（core + spring-boot3 模块）**：熔断与超时隔离是 upstream
+- **ADR-011 选择 Resilience4j（仅 core 模块）**：熔断与超时隔离是 upstream
   联邦的硬需求。选用 Resilience4j 2.4.0——CircuitBreaker/TimeLimiter 双层包裹
-  （超时在内、熔断在外，超时计为失败），配置走官方 spring-boot3 模块的 YAML 约定；
-  若未来该模块与 Boot 大版本不兼容，core 模块无框架耦合可独立保留。
+  （超时在内、熔断在外，超时计为失败）。原计划用官方 spring-boot3 集成模块的
+  YAML 约定，该模块的 SpringBoot3Verifier 与 Boot 4 大版本不兼容，定稿为：仅依赖
+  无框架耦合的 core 模块，Registry Bean 由 UpstreamConfig 手工装配，
+  配置经自定义属性 `gateway.upstreams.resilience.*` 传入。
 - **ADR-012 本地与联邦混合注册模式**：不改 DynamicToolRegistry 的本地注册机制，
   upstream 作为"额外工具源"——FederatedToolRegistry 启动时与每轮健康检查后把
   `{upstream}__{tool}` 经新增的 `registerExternalTool` 注册进同一 MCP 清单并落
   ToolRegistry（sideEffect=READ，requiredRole 按 ADR 权限映射），执行器绑定到
   UpstreamToolRouter；upstream 不可达时其工具自动从 tools/list 剔除。权限检查、
   审计（Outbox）、admin 查询对联邦工具与本地工具一视同仁。
+
+- **ADR-013 可观测性选 Micrometer + Prometheus，而非 OpenTelemetry**：指标埋点只需
+  counter/timer/gauge 三种原语，Micrometer 是 Boot 4 的一等公民（actuator 自动暴露
+  /actuator/prometheus），零额外采集链路即可被 Prometheus 抓取；OpenTelemetry 的核心
+  价值在分布式 tracing 与跨语言采集，属于多维联调场景——留作未来扩展（本轮明确不做
+  tracing/告警/日志聚合）。埋点全部为旁路：SafeToolExecutor / EchoTools /
+  ConfirmationTools / ConfirmationService / UpstreamToolRouter / UpstreamHealthChecker
+  只"顺带"调用 ToolMetrics / UpstreamMetrics，不改变任何调用语义与返回值。
 
 ## 模块依赖
 
@@ -166,10 +183,11 @@ gateway-core ──▶ gateway-audit（审计 SPI：Publisher/Relay/Controller�
   Maven reactor 循环依赖。影响面评估：全项目仅此一处跨模块 split package；
   阶段三新增的 confirmation 包整体放在 gateway-core，依赖面没有扩大。
   若未来 core 需要反向依赖更多 security 类型，再引入 ToolDescriptor 接口方案。
-- **CONFIRMED → EXECUTED 的并发加固**：SafeToolExecutor 命中 CONFIRMED 记录后执行，
-  `@Version` 乐观锁保证状态一致，但不保证 actualExecutor 恰好执行一次
-  （并发双调用理论上可重复执行）。单实例部署风险低；多实例加固需要原子 claim
-  （`UPDATE ... SET status='EXECUTED' WHERE status='CONFIRMED'` 检查影响行数）。
+- **并发执行已加固（原技术债，已解决）**：SafeToolExecutor 执行已确认记录前先用
+  数据库条件 UPDATE 原子 claim（`CONFIRMED → EXECUTING`，检查影响行数），
+  多实例下同一条确认记录只被一个请求执行；claim 抢不到的请求落回创建新 PENDING，
+  执行失败退回 CONFIRMED 保留确认机会。见 ConfirmationService.markExecuted 与
+  PendingExecutionRepository.transitionStatus。
 - **shedlock 表双路建表**：PostgreSQL 由 V2 迁移建表；H2（Flyway 关闭）由
   ShedLockConfig 的 InitializingBean 用 `CREATE TABLE IF NOT EXISTS` 兜底。
   两边幂等不冲突，但属于迁移之外的代码建表；若后续做 vendor 分目录迁移可收敛。

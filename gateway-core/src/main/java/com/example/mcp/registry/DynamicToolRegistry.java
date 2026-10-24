@@ -1,6 +1,8 @@
 package com.example.mcp.registry;
 
+import tools.jackson.databind.json.JsonMapper;
 import com.example.mcp.confirmation.SafeToolExecutor;
+import com.example.mcp.ratelimit.ToolRateLimitException;
 import com.example.mcp.security.PermissionDeniedException;
 import com.example.mcp.security.ToolAction;
 import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapper;
@@ -13,7 +15,6 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -34,7 +35,7 @@ import java.util.function.Function;
 public class DynamicToolRegistry implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DynamicToolRegistry.class);
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = com.example.mcp.support.JsonMappers.MAPPER;
 
     private final ToolRegistryRepository repository;
     private final McpSyncServer mcpSyncServer;
@@ -114,9 +115,21 @@ public class DynamicToolRegistry implements ApplicationRunner {
                                 .addTextContent("permission_denied: " + e.getMessage())
                                 .isError(true)
                                 .build();
+                    } catch (ToolRateLimitException e) {
+                        return McpSchema.CallToolResult.builder()
+                                .addTextContent("rate_limited: " + e.getMessage())
+                                .isError(true)
+                                .build();
                     } catch (IllegalArgumentException e) {
                         return McpSchema.CallToolResult.builder()
                                 .addTextContent("invalid_request: " + e.getMessage())
+                                .isError(true)
+                                .build();
+                    } catch (RuntimeException e) {
+                        // 兜底：工具实现抛出的任意异常统一转 isError，不让异常穿透 handler 破坏传输层
+                        log.warn("工具 '{}' 执行失败", tool.getName(), e);
+                        return McpSchema.CallToolResult.builder()
+                                .addTextContent("tool_error: " + e.getMessage())
                                 .isError(true)
                                 .build();
                     }

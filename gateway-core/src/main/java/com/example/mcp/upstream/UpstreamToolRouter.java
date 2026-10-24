@@ -1,13 +1,15 @@
 package com.example.mcp.upstream;
 
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import io.github.resilience4j.timelimiter.TimeLimiter;
 import io.github.resilience4j.timelimiter.TimeLimiterRegistry;
+import com.example.mcp.metrics.UpstreamMetrics;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.stereotype.Component;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -23,20 +25,23 @@ import java.util.function.Supplier;
 @Component
 public class UpstreamToolRouter {
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = com.example.mcp.support.JsonMappers.MAPPER;
     private static final TypeReference<Map<String, Object>> ARGS_TYPE = new TypeReference<>() {
     };
 
     private final McpClientPool pool;
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final TimeLimiterRegistry timeLimiterRegistry;
+    private final UpstreamMetrics upstreamMetrics;
 
     public UpstreamToolRouter(McpClientPool pool,
                               CircuitBreakerRegistry circuitBreakerRegistry,
-                              TimeLimiterRegistry timeLimiterRegistry) {
+                              TimeLimiterRegistry timeLimiterRegistry,
+                              UpstreamMetrics upstreamMetrics) {
         this.pool = pool;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.timeLimiterRegistry = timeLimiterRegistry;
+        this.upstreamMetrics = upstreamMetrics;
     }
 
     /** 供 DynamicToolRegistry 绑定到联邦工具的执行器。 */
@@ -49,18 +54,29 @@ public class UpstreamToolRouter {
         if (client == null) {
             throw new IllegalArgumentException("unknown upstream: " + upstreamName);
         }
+        // 入参解析在熔断/重试路径之外：调用方的 JSON 写错是 invalid_request，
+        // 与 upstream 健康无关 —— 不该计熔断失败率，更不该重置会话
+        Map<String, Object> args;
+        try {
+            args = inputJson == null || inputJson.isBlank() ? Map.of() : JSON.readValue(inputJson, ARGS_TYPE);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                    "工具入参不是合法 JSON 对象: " + rootMessage(e), e);
+        }
+        long start = System.nanoTime();
         try {
             Supplier<String> call = () -> {
-                Map<String, Object> args = inputJson == null || inputJson.isBlank()
-                        ? Map.of()
-                        : JSON.readValue(inputJson, ARGS_TYPE);
                 McpSchema.CallToolResult result = client.callTool(upstreamToolName, args);
-                if (Boolean.TRUE.equals(result.isError())) {
-                    throw new IllegalStateException(textOf(result));
-                }
+                // isError=true 是 upstream 的业务级错误结果（如参数校验失败）：
+                // 传输本身是成功的，不重置会话、不计熔断失败率 —— 否则频繁的参数错误
+                // 会把一个完全健康的 upstream 熔断掉
                 String text = textOf(result);
-                return JSON.writeValueAsString(
-                        Map.of("upstream", upstreamName, "tool", upstreamToolName, "result", text));
+                return Boolean.TRUE.equals(result.isError())
+                        ? JSON.writeValueAsString(Map.of(
+                                "upstream", upstreamName, "tool", upstreamToolName,
+                                "isError", true, "result", text))
+                        : JSON.writeValueAsString(Map.of(
+                                "upstream", upstreamName, "tool", upstreamToolName, "result", text));
             };
             // 超时隔离在内（慢调用 5s 掐断），熔断在外（失败率统计含超时）
             Supplier<String> timed = () -> {
@@ -74,8 +90,18 @@ public class UpstreamToolRouter {
                     throw new IllegalStateException(e);
                 }
             };
-            return circuitBreaker(upstreamName).executeSupplier(timed::get);
+            CircuitBreaker breaker = circuitBreaker(upstreamName);
+            upstreamMetrics.bindCircuitBreakerState(upstreamName, breaker);
+            String outcome = breaker.executeSupplier(timed::get);
+            upstreamMetrics.recordCall(upstreamName, "success", (System.nanoTime() - start) / 1_000_000);
+            return outcome;
+        } catch (CallNotPermittedException open) {
+            // 熔断打开不是 upstream 故障信号：保留可能健康的会话，half-open 探测不必重新握手
+            upstreamMetrics.recordCall(upstreamName, "error", (System.nanoTime() - start) / 1_000_000);
+            throw new IllegalArgumentException(
+                    "upstream '" + upstreamName + "' 熔断打开，请稍后重试", open);
         } catch (Exception e) {
+            upstreamMetrics.recordCall(upstreamName, "error", (System.nanoTime() - start) / 1_000_000);
             client.reset();
             throw new IllegalArgumentException(
                     "upstream '" + upstreamName + "' 不可用: " + rootMessage(e), e);

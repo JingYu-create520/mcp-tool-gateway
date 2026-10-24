@@ -1,12 +1,12 @@
 package com.example.mcp.registry;
 
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 import com.example.mcp.security.ToolAction;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.List;
@@ -20,7 +20,7 @@ import java.util.UUID;
 @Service
 public class ToolRegistryService {
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = com.example.mcp.support.JsonMappers.MAPPER;
     private static final TypeReference<Map<String, Object>> SCHEMA_TYPE = new TypeReference<>() {
     };
 

@@ -34,21 +34,48 @@ public class McpUpstreamClient {
     }
 
     public List<McpSchema.Tool> listTools() {
-        return client().listTools().tools();
+        try {
+            return client().listTools().tools();
+        } catch (Exception e) {
+            // 会话可能已被服务端过期回收：重置后立即重试一次
+            reset();
+            return client().listTools().tools();
+        }
     }
 
     public McpSchema.CallToolResult callTool(String upstreamToolName, Map<String, Object> args) {
-        return client().callTool(new McpSchema.CallToolRequest(upstreamToolName, args));
+        try {
+            return client().callTool(new McpSchema.CallToolRequest(upstreamToolName, args));
+        } catch (Exception firstAttempt) {
+            // 仅在"请求必然未被执行"的会话失效场景重试（服务端回收会话返回 404 等）：
+            // 超时/IO 失败的执行结果未知，盲目重试会对有副作用的 upstream 工具造成重复执行
+            if (!isSessionInvalid(firstAttempt)) {
+                throw firstAttempt;
+            }
+            reset();
+            return client().callTool(new McpSchema.CallToolRequest(upstreamToolName, args));
+        }
     }
 
-    /** 健康检查：MCP 协议级 ping；失败时重置会话。 */
+    /** 会话失效特征：upstream 明确返回了"没有这个会话/资源"，工具逻辑肯定没跑。 */
+    private static boolean isSessionInvalid(Exception e) {
+        String message = String.valueOf(e.getMessage()).toLowerCase();
+        return message.contains("404") || message.contains("not found") || message.contains("session");
+    }
+
+    /** 健康检查：MCP 协议级 ping；失败时重置会话并立即重试一次，仍失败才判定不健康。 */
     public boolean ping() {
         try {
             client().ping();
             return true;
         } catch (Exception e) {
             reset();
-            return false;
+            try {
+                client().ping();
+                return true;
+            } catch (Exception retryFailed) {
+                return false;
+            }
         }
     }
 

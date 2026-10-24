@@ -122,6 +122,21 @@
       <version>2.4.0</version>
     </dependency>
 
+    <!-- 可观测性：Micrometer + actuator（Prometheus 指标端点） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-actuator</artifactId>
+    </dependency>
+    <!-- RedisRateLimiter：多实例全局精确限流（gateway.rate-limiter=redis 时激活） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
+
     <!-- 联邦集成测试复用 time/weather upstream（test scope，不参与生产链路） -->
     <dependency>
       <groupId>com.example.mcp</groupId>

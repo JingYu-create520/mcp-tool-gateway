@@ -1,5 +1,6 @@
 package com.example.mcp.upstream;
 
+import tools.jackson.databind.json.JsonMapper;
 import com.example.mcp.registry.DynamicToolRegistry;
 import com.example.mcp.registry.ToolRegistry;
 import com.example.mcp.registry.ToolRegistryRepository;
@@ -11,7 +12,6 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -32,7 +32,7 @@ public class FederatedToolRegistry implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(FederatedToolRegistry.class);
     private static final String SEPARATOR = "__";
-    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final JsonMapper JSON = com.example.mcp.support.JsonMappers.MAPPER;
 
     private final UpstreamProperties properties;
     private final McpClientPool pool;
@@ -86,22 +86,30 @@ public class FederatedToolRegistry implements ApplicationRunner {
     }
 
     private void registerTracked(UpstreamProperties.Upstream upstream, List<McpSchema.Tool> remoteTools) {
+        List<String> alreadyTracked = trackedByUpstream.getOrDefault(upstream.name(), List.of());
         List<String> names = new ArrayList<>();
+        boolean anyChanged = false;
         for (McpSchema.Tool remote : remoteTools) {
             String fullName = upstream.name() + SEPARATOR + remote.name();
-            ToolRegistry row = upsertRegistryRow(upstream, fullName, remote);
-            dynamicToolRegistry.registerExternalTool(row, router.executorFor(upstream.name(), remote.name()));
+            UpsertOutcome outcome = upsertRegistryRow(upstream, fullName, remote);
+            // 内容与清单都没变时不重注册（健康检查每 30 秒一轮，不应产生 MCP 通知与 DB 写噪音）
+            if (outcome.changed() || !alreadyTracked.contains(fullName)) {
+                dynamicToolRegistry.registerExternalTool(
+                        outcome.row(), router.executorFor(upstream.name(), remote.name()));
+            }
+            anyChanged |= outcome.changed();
             names.add(fullName);
         }
         // 远端工具清单里已消失的，从 MCP 清单剔除
-        for (String stale : trackedByUpstream.getOrDefault(upstream.name(), List.of())) {
+        for (String stale : alreadyTracked) {
             if (!names.contains(stale)) {
                 dynamicToolRegistry.remove(stale);
                 log.info("upstream '{}' 的工具 '{}' 已在远端消失，从联邦清单剔除", upstream.name(), stale);
             }
         }
         trackedByUpstream.put(upstream.name(), names);
-        if (!names.isEmpty()) {
+        // 名单与内容都没变时不再刷同步日志（每 30 秒一条 info 是噪音）
+        if (!names.isEmpty() && (anyChanged || !names.equals(alreadyTracked))) {
             log.info("upstream '{}' 联邦工具同步完成: {}", upstream.name(), names);
         }
     }
@@ -113,24 +121,39 @@ public class FederatedToolRegistry implements ApplicationRunner {
         trackedByUpstream.remove(upstreamName);
     }
 
-    private ToolRegistry upsertRegistryRow(UpstreamProperties.Upstream upstream, String fullName, McpSchema.Tool remote) {
+    /** upsert 结果：row 为当前生效行，changed 表示本轮有内容写入（需要重注册到 MCP）。 */
+    private record UpsertOutcome(ToolRegistry row, boolean changed) {}
+
+    private UpsertOutcome upsertRegistryRow(
+            UpstreamProperties.Upstream upstream, String fullName, McpSchema.Tool remote) {
         ToolRegistry row = repository.findByName(fullName).orElseGet(ToolRegistry::new);
-        boolean isNew = row.getId() == null;
+        String description = "[" + upstream.name() + "] "
+                + (remote.description() == null ? "" : remote.description());
+        String inputSchema = JSON.writeValueAsString(remote.inputSchema());
+        String requiredRole = permissionMapper.requiredRole(upstream, remote.name());
+        ToolAction sideEffect = permissionMapper.sideEffect(remote.name());
+
+        boolean exists = row.getId() != null;
+        if (exists && description.equals(row.getDescription()) && inputSchema.equals(row.getInputSchema())
+                && sideEffect == row.getSideEffect()
+                && requiredRole.equals(row.getRequiredRole())) {
+            return new UpsertOutcome(row, false);
+        }
+
         row.setName(fullName);
-        row.setDescription("[" + upstream.name() + "] "
-                + (remote.description() == null ? "" : remote.description()));
-        row.setInputSchema(JSON.writeValueAsString(remote.inputSchema()));
-        row.setSideEffect(ToolAction.READ);
-        row.setRequiredRole(permissionMapper.requiredRole(upstream, remote.name()));
+        row.setDescription(description);
+        row.setInputSchema(inputSchema);
+        row.setSideEffect(sideEffect);
+        row.setRequiredRole(requiredRole);
         row.setRequiredTenant(null);
         row.setRateLimit(null);
         Instant now = Instant.now();
-        if (isNew) {
+        if (!exists) {
             row.setId(UUID.randomUUID());
             row.setEnabled(true);
             row.setCreatedAt(now);
         }
         row.setUpdatedAt(now);
-        return repository.save(row);
+        return new UpsertOutcome(repository.save(row), true);
     }
 }

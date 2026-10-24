@@ -1,5 +1,19 @@
 # PermissionCheckerIT 等使用：H2 内存库 + 关闭 Flyway；
-# gateway.api-keys 沿用主 application.yml，无需重复定义。
+# API Key 由 DbApiKeySeeder 启动时写入（H2 同样生效）。
+# resilience 参数故意取与 UpstreamProperties 回退默认值不同的值：
+# UpstreamPropertiesBindingIT 靠它们验证 YAML 真的绑定进 bean（层级错位回落默认值时测试变红）
+gateway:
+  seed-api-keys: true
+  upstreams:
+    resilience:
+      circuitbreaker:
+        sliding-window-size: 7
+        failure-rate-threshold: 60
+        wait-duration-in-open-state-seconds: 25
+        permitted-number-of-calls-in-half-open-state: 2
+      timelimiter:
+        timeout-duration-seconds: 9
+
 spring:
   datasource:
     url: jdbc:h2:mem:mcp_test;DB_CLOSE_DELAY=-1

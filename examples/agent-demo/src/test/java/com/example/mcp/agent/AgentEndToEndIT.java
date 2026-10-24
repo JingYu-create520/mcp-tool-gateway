@@ -43,18 +43,13 @@ class AgentEndToEndIT {
 
     @DynamicPropertySource
     static void gatewayProps(DynamicPropertyRegistry registry) {
-        // Gateway 在本测试 JVM 里用 H2 内存库（Flyway 关闭，Hibernate 建表）
+        // Gateway 在本测试 JVM 里用 H2 内存库（Flyway 关闭，Hibernate 建表）；
+        // API Key 来自 DbApiKeySeeder 启动种子（admin-key 含 admin/user/confirmer 角色）
         registry.add("spring.datasource.url", () -> "jdbc:h2:mem:agent_demo_gateway;DB_CLOSE_DELAY=-1");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "update");
-        // API Key（agent-demo 的 application.yml 遮蔽了 gateway 的同名文件，这里显式补齐）
-        registry.add("gateway.api-keys.keys.admin-key.caller-id", () -> "admin-user");
-        registry.add("gateway.api-keys.keys.admin-key.tenant-id", () -> "tenant-a");
-        registry.add("gateway.api-keys.keys.admin-key.roles[0]", () -> "admin");
-        registry.add("gateway.api-keys.keys.admin-key.roles[1]", () -> "user");
-        registry.add("gateway.api-keys.keys.user-key.caller-id", () -> "user-1");
-        registry.add("gateway.api-keys.keys.user-key.tenant-id", () -> "tenant-a");
-        registry.add("gateway.api-keys.keys.user-key.roles[0]", () -> "user");
-        // MCP server（同上：显式补齐被遮蔽的配置）
+        // 与 gateway 主配置一致：关 OSIV（无视图层，且避免请求级持久化上下文的实体快照问题）
+        registry.add("spring.jpa.open-in-view", () -> "false");
+        // MCP server（agent-demo 的 application.yml 遮蔽了 gateway 的同名文件，这里显式补齐）
         registry.add("spring.ai.mcp.server.protocol", () -> "STREAMABLE");
         registry.add("spring.ai.mcp.server.type", () -> "SYNC");
         registry.add("spring.ai.mcp.server.name", () -> "mcp-tool-gateway");
@@ -83,11 +78,12 @@ class AgentEndToEndIT {
         assertThat(result.confirmationId()).isNotBlank();
         assertThat(result.confirmHttpStatus()).isEqualTo("200");
         assertThat(result.upsertSecondStatus()).isEqualTo("executed");
-        assertThat(result.auditRows()).isGreaterThanOrEqualTo(1);
+        assertThat(result.auditRows()).isGreaterThanOrEqualTo(4);
 
-        // Gateway 侧：确认状态机与审计轨迹（PENDING → CONFIRMED → EXECUTED）
+        // Gateway 侧：确认状态机与审计轨迹（PENDING → CONFIRMED → EXECUTING → EXECUTED）
         awaitAuditStatus("PENDING");
         awaitAuditStatus("CONFIRMED");
+        awaitAuditStatus("EXECUTING");
         awaitAuditStatus("EXECUTED");
     }
 

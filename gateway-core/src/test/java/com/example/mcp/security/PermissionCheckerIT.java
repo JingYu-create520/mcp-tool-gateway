@@ -34,6 +34,14 @@ class PermissionCheckerIT {
     }
 
     @Test
+    void unrestrictedToolPassesForAnyAuthenticatedCaller() {
+        // 最常见的工具形态：无 requiredRole/requiredTenant，任何认证调用方可执行
+        authenticate("user-1", "tenant-b", Set.of("user"));
+        assertThatCode(() -> permissionChecker.check(tool(null, null)))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void adminRoleAndMatchingTenantPasses() {
         authenticate("tester", "tenant-a", Set.of("admin"));
         assertThatCode(() -> permissionChecker.check(tool("admin", "tenant-a")))

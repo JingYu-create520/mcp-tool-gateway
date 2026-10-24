@@ -19,6 +19,12 @@ public class AuditEventPublisher {
     public static final String AGGREGATE_TYPE = "audit";
     public static final String EVENT_TYPE_TOOL_CALL = "TOOL_CALL";
 
+    /**
+     * input/output 单字段上限：审计是证据链不是数据管道，
+     * 巨大入参（如一次塞进 echo 的长文本）截断留痕，防止 audit_log 被单条记录拖爆。
+     */
+    static final int MAX_FIELD_LENGTH = 16 * 1024;
+
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final OutboxMessageRepository outboxRepository;
@@ -35,8 +41,8 @@ public class AuditEventPublisher {
         if (event.getCreatedAt() == null) {
             event.setCreatedAt(Instant.now());
         }
-        event.setInput(asJson(Sanitizer.sanitize(event.getInput())));
-        event.setOutput(asJson(Sanitizer.sanitize(event.getOutput())));
+        event.setInput(asJson(truncate(Sanitizer.sanitize(event.getInput()))));
+        event.setOutput(asJson(truncate(Sanitizer.sanitize(event.getOutput()))));
 
         OutboxMessage message = new OutboxMessage();
         message.setAggregateType(AGGREGATE_TYPE);
@@ -47,6 +53,13 @@ public class AuditEventPublisher {
         message.setRetryCount(0);
         message.setCreatedAt(Instant.now());
         outboxRepository.save(message);
+    }
+
+    static String truncate(String value) {
+        if (value == null || value.length() <= MAX_FIELD_LENGTH) {
+            return value;
+        }
+        return value.substring(0, MAX_FIELD_LENGTH) + "...(truncated, 原始长度 " + value.length() + " 字符)";
     }
 
     /**

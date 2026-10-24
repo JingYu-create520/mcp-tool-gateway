@@ -3,10 +3,15 @@ package com.example.mcp.tools.vredis;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.json.JsonMapper;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -19,11 +24,26 @@ public class VredisHttpClient {
 
     private static final org.slf4j.Logger log =
             org.slf4j.LoggerFactory.getLogger(VredisHttpClient.class);
+    // 本模块不依赖 gateway-core（依赖方向相反），这里持有一个自己的 mapper 实例
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final RestClient restClient;
+    private final boolean configured;
 
-    public VredisHttpClient(@Value("${vredis.base-url:http://localhost:9090}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+    public VredisHttpClient(@Value("${vredis.base-url:http://localhost:9090}") String baseUrl,
+                            @Value("${vredis.connect-timeout-ms:3000}") long connectTimeoutMs,
+                            @Value("${vredis.request-timeout-ms:5000}") long requestTimeoutMs) {
+        this.configured = baseUrl != null && !baseUrl.isBlank();
+        // 显式超时：后端卡死不能拖死 MCP 工具线程（与 upstream 侧 TimeLimiter 防护对等）
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofMillis(requestTimeoutMs));
+        this.restClient = RestClient.builder()
+                .baseUrl(configured ? baseUrl : "http://localhost:0")
+                .requestFactory(requestFactory)
+                .build();
     }
 
     public String search(String body) {
@@ -63,6 +83,10 @@ public class VredisHttpClient {
     }
 
     private String exchange(Supplier<String> call) {
+        if (!configured) {
+            // 未部署 vredis 是部署形态而非故障：给人话，不发起注定失败的请求
+            return unavailable("vredis 后端未配置（vredis.base-url 为空）");
+        }
         try {
             String result = call.get();
             return result == null || result.isBlank() ? "{}" : result;
@@ -75,7 +99,7 @@ public class VredisHttpClient {
     }
 
     private static String unavailable(String message) {
-        return "{\"error\":\"vredis_unavailable\",\"message\":\""
-                + message.replace("\\", "/").replace("\"", "'") + "\"}";
+        // JsonMapper 序列化：异常消息含引号/换行时也能生成合法 JSON（结果会写入 JSONB 列）
+        return JSON.writeValueAsString(Map.of("error", "vredis_unavailable", "message", message));
     }
 }

@@ -8,6 +8,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,6 +28,9 @@ class AuditEventPublisherIT {
     OutboxMessageRepository outboxRepository;
 
     @Autowired
+    AuditEventRepository auditRepository;
+
+    @Autowired
     PlatformTransactionManager transactionManager;
 
     @Test
@@ -34,14 +38,21 @@ class AuditEventPublisherIT {
         AuditEvent event = sample("pub_probe_1");
         publisher.publish(event);
 
+        // 共享 H2 库里其他上下文的 5 秒 relay 可能恰好在断言前投递并删除该行：
+        // "outbox 仍有 PENDING 行"与"已落 audit_log"都是 publish 成功的合法终态
         OutboxMessage message = findByAggregateId(event.getId().toString());
-        assertThat(message).isNotNull();
-        assertThat(message.getStatus()).isEqualTo(OutboxMessage.STATUS_PENDING);
-        assertThat(message.getAggregateType()).isEqualTo("audit");
-        assertThat(message.getPayload())
-                .contains("pub_probe_1")
-                .contains("caller-1")
-                .doesNotContain("p1-secret");
+        boolean stillPending = message != null;
+        if (stillPending) {
+            assertThat(message.getStatus()).isEqualTo(OutboxMessage.STATUS_PENDING);
+            assertThat(message.getAggregateType()).isEqualTo("audit");
+            assertThat(message.getPayload())
+                    .contains("pub_probe_1")
+                    .contains("caller-1")
+                    .doesNotContain("p1-secret");
+        } else {
+            assertThat(auditRepository.findByToolNameAndStatusOrderByCreatedAtDesc("pub_probe_1", "EXECUTED"))
+                    .anyMatch(row -> row.getId().equals(event.getId()));
+        }
     }
 
     @Test
@@ -71,6 +82,25 @@ class AuditEventPublisherIT {
         assertThat(message.getPayload())
                 .contains("\\\"password\\\":\\\"***\\\"")
                 .doesNotContain("p1-secret");
+    }
+
+    @Test
+    void oversizedFieldsAreTruncatedWithMarker() {
+        AuditEvent event = sample("pub_probe_huge");
+        // 超过 MAX_FIELD_LENGTH 的入参：截断留痕，audit_log 不被单条记录拖爆
+        event.setInput("{\"blob\":\"" + "x".repeat(AuditEventPublisher.MAX_FIELD_LENGTH + 100) + "\"}");
+        publisher.publish(event);
+
+        assertThat(findPayloadOrAuditFallback(event.getId(), "pub_probe_huge")).contains("truncated");
+    }
+
+    /** outbox 行可能已被后台 relay 投递删除：此时从 audit_log 取已落库的 input。 */
+    private String findPayloadOrAuditFallback(UUID eventId, String toolName) {
+        OutboxMessage message = findByAggregateId(eventId.toString());
+        if (message != null) {
+            return message.getPayload();
+        }
+        return auditRepository.findById(eventId).map(AuditEvent::getInput).orElse("");
     }
 
     private OutboxMessage findByAggregateId(String aggregateId) {
